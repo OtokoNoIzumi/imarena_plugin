@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body {
+      width: 350px;
+      padding: 20px;
+      font-family: Arial, sans-serif;
+      background: #f5f5f5;
+    }
+    h3 {
+      margin: 0 0 15px 0;
+      color: #333;
+      text-align: center;
+    }
+
+    .section {
+      margin-bottom: 15px;
+      padding: 10px;
+      background: white;
+      border-radius: 6px;
+      border: 1px solid #ddd;
+    }
+
+    .section-title {
+      font-weight: bold;
+      margin-bottom: 8px;
+      color: #555;
+    }
+
+    .button-group {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .position-btn {
+      padding: 6px 12px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      background: #f8f9fa;
+      cursor: pointer;
+      font-size: 12px;
+      transition: all 0.2s;
+    }
+
+    .position-btn:hover {
+      background: #e9ecef;
+      border-color: #adb5bd;
+    }
+
+    .position-btn.selected {
+      background: #007bff;
+      color: white;
+      border-color: #007bff;
+    }
+
+    .position-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    button {
+      width: 100%;
+      padding: 12px 20px;
+      margin: 8px 0;
+      cursor: pointer;
+      border: none;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: bold;
+      transition: background-color 0.3s;
+    }
+
+    #startBtn {
+      background: #4CAF50;
+      color: white;
+    }
+    #startBtn:hover:not(:disabled) {
+      background: #45a049;
+    }
+    #testBtn {
+      background: #2196F3;
+      color: white;
+    }
+    #testBtn:hover:not(:disabled) {
+      background: #1976D2;
+    }
+    #stopBtn {
+      background: #f44336;
+      color: white;
+    }
+    #stopBtn:hover:not(:disabled) {
+      background: #da190b;
+    }
+    button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    #status {
+      margin-top: 15px;
+      padding: 10px;
+      font-size: 14px;
+      background: white;
+      border-radius: 4px;
+      border-left: 4px solid #2196F3;
+    }
+    .status-info {
+      margin-top: 8px;
+      font-size: 12px;
+      color: #666;
+    }
+
+    .refresh-info {
+      font-size: 11px;
+      color: #666;
+      margin-top: 5px;
+      font-style: italic;
+    }
+
+    .input-group {
+      margin-bottom: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .input-group label {
+      font-size: 12px;
+      color: #555;
+      margin-right: 10px;
+    }
+
+    .input-group input {
+      width: 80px;
+      padding: 4px 8px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      font-size: 12px;
+    }
+
+    .input-group input:focus {
+      outline: none;
+      border-color: #007bff;
+    }
+
+    .report {
+      background: #f8f9fa;
+      border: 1px solid #dee2e6;
+      border-radius: 4px;
+      padding: 10px;
+      margin-top: 10px;
+      font-size: 12px;
+    }
+
+    .report-title {
+      font-weight: bold;
+      margin-bottom: 5px;
+      color: #495057;
+    }
+
+    .report-item {
+      margin-bottom: 3px;
+      display: flex;
+      justify-content: space-between;
+    }
+
+    .report-item span:first-child {
+      color: #6c757d;
+    }
+
+    .report-item span:last-child {
+      font-weight: bold;
+      color: #495057;
+    }
+  </style>
+</head>
+<body>
+  <h3>🔄 LMArena 自动刷新</h3>
+
+  <div class="section">
+    <div class="section-title">选择刷新按钮位置：</div>
+    <div class="button-group" style="display: flex; gap: 10px;">
+      <button class="position-btn selected" data-position="first" style="flex: 1;">左边</button>
+      <button class="position-btn" data-position="last" style="flex: 1;">右边</button>
+    </div>
+    <div class="refresh-info">点击按钮选择要刷新的位置</div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">停止条件设置：</div>
+    <div class="input-group">
+      <label for="maxOperations">图片生成次数上限：</label>
+      <input type="number" id="maxOperations" value="100" min="1" max="1000">
+    </div>
+    <div class="input-group">
+      <label for="maxDownloads">成功生成次数上限：</label>
+      <input type="number" id="maxDownloads" value="50" min="1" max="1000">
+    </div>
+    <div class="refresh-info">满足任一条件即自动停止</div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">操作控制：</div>
+    <button id="testBtn">测试按钮选择</button>
+    <button id="startBtn">开始自动生成图片</button>
+    <button id="stopBtn" disabled>停止操作</button>
+  </div>
+
+  <div id="status">
+    <div>状态: 已停止</div>
+    <div class="status-info">请先选择按钮位置，然后点击"开始"</div>
+  </div>
+
+  <div id="report" class="report" style="display: none;">
+    <div class="report-title">运行报告</div>
+    <div id="reportContent"></div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
