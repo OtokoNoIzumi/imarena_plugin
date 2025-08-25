@@ -19,7 +19,7 @@ let initialState = {
 
 // 配置参数
 // 🔥 重要配置：方便调试修改
-const REFRESH_INTERVAL_CONFIG = 1 * 60 * 1000; // 1分钟（测试用，生产环境改为30*60*1000）
+const REFRESH_INTERVAL_CONFIG = 10 * 60 * 1000; // 10分钟（测试用，生产环境改为30*60*1000）
 
 const CONFIG = {
   // 刷新按钮的选择器（已验证有效）
@@ -457,7 +457,7 @@ function waitForRefreshComplete() {
 
       const currentCount = getCurrentRefreshButtonCount();
       const elapsedTime = Date.now() - startTime;
-      console.log(`等待图片生成完成... 当前刷新按钮数量: ${currentCount}, 初始数量: ${initialState.refreshButtonCount}`);
+      // console.log(`等待图片生成完成... 当前刷新按钮数量: ${currentCount}, 初始数量: ${initialState.refreshButtonCount}`);
 
       if (currentCount === initialState.refreshButtonCount) {
         clearInterval(checkInterval);
@@ -530,7 +530,7 @@ function tryFindDownloadButton() {
 // 执行一次完整的刷新-下载流程
 async function executeRefreshCycle() {
   try {
-    console.log(`🔄 开始第 ${operationCount + 1} 次刷新循环`);
+    console.log(`🔄 开始第 ${operationCount + 1} 次循环生成图片`);
 
     // 1. 找到刷新按钮
     const refreshButton = findRefreshButton();
@@ -545,19 +545,12 @@ async function executeRefreshCycle() {
       return 'stop_loop'; // 停止当前循环，等待页面刷新后自动恢复
     }
 
-    // 3. 记录刷新按钮信息（在点击之前）
-    const refreshButtonPosition = {
-      left: refreshButton.getBoundingClientRect().left,
-      top: refreshButton.getBoundingClientRect().top
-    };
-    console.log(`将要点击刷新按钮 #${initialState.clickedRefreshButtonIndex + 1}: (${refreshButtonPosition.left}, ${refreshButtonPosition.top})`);
-
     // 4. 点击刷新按钮
     refreshButton.click();
     operationCount++;
 
     // 5. 等待刷新完成
-    console.log('开始图片生成...');
+    // console.log('开始图片生成...');
     try {
       await waitForRefreshComplete();
     } catch (error) {
@@ -573,7 +566,6 @@ async function executeRefreshCycle() {
     }
 
     // 6. 尝试查找对应的下载按钮（最多尝试3次）
-    // console.log('开始查找对应的下载按钮...');
     const downloadButton = await tryFindDownloadButton();
 
     // 7. 点击下载按钮
@@ -586,7 +578,12 @@ async function executeRefreshCycle() {
     return true; // 成功完成一次循环
 
   } catch (error) {
-    console.log(`❌ 第 ${operationCount} 次循环失败:`, error);
+    // 图片生成失败是正常情况，简化日志输出
+    if (error.message.includes('未找到下载按钮')) {
+      console.log(`❌ 第 ${operationCount} 次循环失败: 未找到下载按钮，等待2秒后重新尝试...`);
+    } else {
+      console.log(`❌ 第 ${operationCount} 次循环失败: ${error.message}`);
+    }
     return false; // 失败
   }
 }
@@ -654,7 +651,7 @@ function startAutoRefresh(maxOperations = CONFIG.maxOperations, maxDownloads = C
         // 不调用stopAutoRefresh，因为页面会刷新
         return;
       } else {
-        console.log('❌ 生成失败，等待2秒后重新尝试...');
+        // 生成失败，等待后重新尝试（日志已在executeRefreshCycle中输出）
         setTimeout(runCycle, 2000);
       }
     }
@@ -920,7 +917,7 @@ function restoreAutoRefreshState(state) {
               console.log('🌐 检测到需要页面刷新，停止循环');
               return;
             } else {
-              console.log('❌ 生成失败，等待2秒后重新尝试...');
+              // console.log('❌ 生成失败，等待2秒后重新尝试...');
               setTimeout(runCycle, 2000);
             }
           }
@@ -963,7 +960,7 @@ function checkAutoStart() {
       const maxDownloads = settings.maxDownloads || 50;
       const position = settings.position || 'first';
 
-      console.log('📋 使用设置开始循环生成图片:', { maxOperations, maxDownloads, position });
+      // console.log('📋 使用设置开始循环生成图片:', { maxOperations, maxDownloads, position });
       selectedPosition = position;
 
       // 等待页面加载完成后自动启动
@@ -971,9 +968,9 @@ function checkAutoStart() {
         // console.log('🚀 开始自动启动...');
         const result = startAutoRefresh(maxOperations, maxDownloads);
         if (result.success) {
-          console.log('✅ 自动循环生成图片成功');
+          // console.log('✅ 自动启动循环生成图片成功');
         } else {
-          console.error('❌ 自动循环生成图片失败:', result.error);
+          console.log('❌ 自动启动循环生成图片失败:', result.error);
         }
       }, 3000);
     } else {
@@ -1148,7 +1145,7 @@ function setupRefreshButtonListener() {
             const titleSpan = titleContainer?.querySelector('span.truncate');
             const titleText = titleSpan ? titleSpan.textContent.trim() : '';
             const side = titleText === 'Assistant A' ? 'left' : 'right';
-            console.log(`🔄 重新分析${side}侧容器: ${containerId}`);
+            // console.log(`🔄 重新分析${side}侧容器: ${containerId}`);
             updateComponentStatus(containerId, side, '重新分析中...');
 
             // 延迟分析
