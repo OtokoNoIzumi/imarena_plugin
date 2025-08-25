@@ -62,8 +62,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         const report = request.report;
         console.log('提取的报告对象:', report);
 
-        if (report && report.totalRefreshes !== undefined) {
-          const message = `循环结束 - 刷新: ${report.totalRefreshes}次, 下载: ${report.successfulDownloads}次, 成功率: ${report.successRate}%, 耗时: ${report.totalTimeFormatted}`;
+        if (report && report.operationCount !== undefined) {
+          const message = `循环结束 - 生成: ${report.operationCount}次, 下载: ${report.successfulDownloads}次, 成功率: ${report.successRate}%, 耗时: ${report.totalTimeFormatted}`;
           console.log('发送通知消息:', message);
           chrome.notifications.create({
             type: 'basic',
@@ -72,15 +72,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             message: message
           }).catch(err => console.log('完成通知发送失败:', err));
         } else {
-          // 兼容旧版本，如果没有report对象或report不完整
-          console.warn('报告对象不完整，使用备用信息');
-          const message = `循环结束 - 共执行 ${request.count || 0} 次操作`;
-          chrome.notifications.create({
-            type: 'basic',
-            iconUrl: 'icons/icon48.png',
-            title: 'LMArena自动刷新',
-            message: message
-          }).catch(err => console.log('完成通知发送失败:', err));
+          console.error('报告对象缺失或格式错误:', report);
         }
         break;
 

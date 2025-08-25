@@ -175,6 +175,21 @@
       font-weight: bold;
       color: #495057;
     }
+
+    .countdown {
+      margin-top: 8px;
+      padding: 8px;
+      background: #e3f2fd;
+      border: 1px solid #2196F3;
+      border-radius: 4px;
+      text-align: center;
+    }
+
+    .countdown .refresh-info {
+      margin: 0;
+      color: #1976D2;
+      font-weight: bold;
+    }
   </style>
 </head>
 <body>
@@ -200,6 +215,18 @@
       <input type="number" id="maxDownloads" value="50" min="1" max="1000">
     </div>
     <div class="refresh-info">满足任一条件即自动停止</div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">自动启动设置：</div>
+    <div class="input-group">
+      <label for="autoStart">页面加载后自动开始：</label>
+      <input type="checkbox" id="autoStart" style="width: auto;">
+    </div>
+    <div id="refreshCountdown" class="countdown" style="display: none;">
+      <div class="refresh-info">下次刷新: <span id="countdownTimer">--:--</span></div>
+    </div>
+    <div class="refresh-info">每60秒自动刷新页面避免Cloudflare过期（测试设置），勾选后页面加载完自动开始执行</div>
   </div>
 
   <div class="section">

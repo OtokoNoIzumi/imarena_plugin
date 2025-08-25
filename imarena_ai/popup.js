@@ -1,3 +1,6 @@
+// 🔥 重要配置：刷新间隔设置（方便调试修改）
+const REFRESH_INTERVAL = 60 * 1000; // 60秒（测试用，生产环境改为30*60*1000）
+
 document.addEventListener('DOMContentLoaded', function() {
   const startBtn = document.getElementById('startBtn');
   const stopBtn = document.getElementById('stopBtn');
@@ -6,11 +9,20 @@ document.addEventListener('DOMContentLoaded', function() {
   const positionBtns = document.querySelectorAll('.position-btn');
   const maxOperationsInput = document.getElementById('maxOperations');
   const maxDownloadsInput = document.getElementById('maxDownloads');
+  const autoStartCheckbox = document.getElementById('autoStart');
+  const refreshCountdownDiv = document.getElementById('refreshCountdown');
+  const countdownTimerSpan = document.getElementById('countdownTimer');
   const reportDiv = document.getElementById('report');
   const reportContentDiv = document.getElementById('reportContent');
 
   // 当前选择的按钮位置
   let selectedPosition = 'first';
+
+  // 自动启动相关变量
+  let autoStartEnabled = false;
+  let refreshInterval = REFRESH_INTERVAL; // 使用配置的刷新间隔
+  let countdownInterval = null;
+  let nextRefreshTime = null;
 
   // 更新状态显示
   function updateStatus(text, info = '') {
@@ -33,6 +45,9 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // 更新状态信息
     updateStatus('已停止', `已选择: ${getPositionText(selectedPosition)}，可以点击"测试"或"开始"`);
+
+    // 保存设置
+    saveSettings();
   }
 
   // 获取位置的中文描述
@@ -53,7 +68,7 @@ document.addEventListener('DOMContentLoaded', function() {
       </div>
       <div class="report-item">
         <span>总生成次数:</span>
-        <span>${report.totalRefreshes}</span>
+        <span>${report.operationCount}</span>
       </div>
       <div class="report-item">
         <span>成功下载:</span>
@@ -77,6 +92,77 @@ document.addEventListener('DOMContentLoaded', function() {
     reportDiv.style.display = 'none';
   }
 
+  // 保存设置到本地存储
+  function saveSettings() {
+    const settings = {
+      autoStart: autoStartEnabled,
+      maxOperations: maxOperationsInput.value,
+      maxDownloads: maxDownloadsInput.value,
+      position: selectedPosition
+    };
+    chrome.storage.local.set(settings);
+  }
+
+  // 从本地存储加载设置
+  function loadSettings() {
+    chrome.storage.local.get(['autoStart', 'maxOperations', 'maxDownloads', 'position'], function(result) {
+      if (result.autoStart !== undefined) {
+        autoStartCheckbox.checked = result.autoStart;
+        autoStartEnabled = result.autoStart;
+      }
+      if (result.maxOperations) maxOperationsInput.value = result.maxOperations;
+      if (result.maxDownloads) maxDownloadsInput.value = result.maxDownloads;
+      if (result.position) {
+        selectedPosition = result.position;
+        // 更新UI显示
+        positionBtns.forEach(btn => {
+          btn.classList.toggle('selected', btn.dataset.position === selectedPosition);
+        });
+      }
+    });
+  }
+
+    // 启动自动刷新（总是运行，无需勾选）
+  function startAutoRefresh() {
+    // 移除倒计时逻辑，现在由content.js控制页面刷新时机
+    console.log('✅ 自动刷新功能已启用，将在需要时自动执行页面刷新');
+  }
+
+  // 停止自动刷新
+  function stopAutoRefresh() {
+    // 移除倒计时逻辑
+    console.log('✅ 自动刷新功能已禁用');
+  }
+
+  // 启动自动刷新倒计时（在开始执行时调用）
+  function startRefreshCountdown() {
+    // 现在由content.js控制，这里只显示状态
+    refreshCountdownDiv.style.display = 'block';
+    countdownTimerSpan.textContent = '已启用';
+  }
+
+  // 更新倒计时显示
+  function updateCountdown() {
+    // 简化显示，只显示已启用状态
+    countdownTimerSpan.textContent = '已启用';
+    refreshCountdownDiv.style.display = 'block';
+  }
+
+  // 执行自动刷新
+  function performAutoRefresh() {
+    console.log('🔄 执行自动刷新...');
+    updateStatus('自动刷新中', '正在刷新页面以避免Cloudflare会话过期...');
+
+    // 发送消息给content script执行刷新
+    sendMessageToTab('performAutoRefresh', function(response) {
+      if (response && response.success) {
+        console.log('✅ 自动刷新成功');
+      } else {
+        console.error('❌ 自动刷新失败:', response ? response.error : '未知错误');
+      }
+    });
+  }
+
   // 获取停止原因的中文描述
   function getStopReasonText(reason) {
     switch (reason) {
@@ -92,6 +178,17 @@ document.addEventListener('DOMContentLoaded', function() {
   // 为所有位置按钮添加点击事件
   positionBtns.forEach(btn => {
     btn.addEventListener('click', () => handlePositionSelection(btn));
+  });
+
+  // 自动启动复选框事件监听
+  autoStartCheckbox.addEventListener('change', function() {
+    autoStartEnabled = this.checked;
+    if (autoStartEnabled) {
+      updateStatus('已停止', `已启用自动启动，页面加载后将自动开始执行`);
+    } else {
+      updateStatus('已停止', `已禁用自动启动`);
+    }
+    saveSettings();
   });
 
   // 发送消息到当前活动标签页的content script
@@ -151,13 +248,19 @@ document.addEventListener('DOMContentLoaded', function() {
     sendMessageToTab('startLoop', function(response) {
       if (response && response.success) {
         updateStatus('运行中', `正在自动点击${getPositionText(selectedPosition)}... (最多${maxOperations}次生成，${maxDownloads}次下载)`);
-        startBtn.disabled = true;
+                startBtn.disabled = true;
         stopBtn.disabled = false;
         testBtn.disabled = true;
         // 禁用输入框
         maxOperationsInput.disabled = true;
         maxDownloadsInput.disabled = true;
         console.log('启动成功');
+
+        // 启动30分钟倒计时
+        startRefreshCountdown();
+
+        // 保存设置
+        saveSettings();
       } else {
         const errorMsg = response ? response.error : '启动失败';
         updateStatus('启动失败', errorMsg);
@@ -181,6 +284,9 @@ document.addEventListener('DOMContentLoaded', function() {
         // 重新启用输入框
         maxOperationsInput.disabled = false;
         maxDownloadsInput.disabled = false;
+
+        // 停止30分钟倒计时
+        stopAutoRefresh();
 
         // 显示报告（如果有的话）
         if (response.report) {
@@ -222,8 +328,40 @@ document.addEventListener('DOMContentLoaded', function() {
       // 重新启用输入框
       maxOperationsInput.disabled = false;
       maxDownloadsInput.disabled = false;
+    } else if (message.action === 'autoRefreshRestored') {
+      // 自动刷新状态恢复
+      console.log('🔄 收到自动刷新状态恢复消息:', message.state);
+
+      // 更新UI状态
+      updateStatus('运行中', `自动刷新后已恢复运行 (${message.state.operationCount}/${message.state.maxOperations}刷新, ${message.state.successfulDownloads}/${message.state.maxDownloads}下载)`);
+      startBtn.disabled = true;
+      stopBtn.disabled = false;
+      testBtn.disabled = true;
+
+      // 更新输入框
+      maxOperationsInput.value = message.state.maxOperations;
+      maxDownloadsInput.value = message.state.maxDownloads;
+      maxOperationsInput.disabled = true;
+      maxDownloadsInput.disabled = true;
+
+      // 更新位置选择
+      selectedPosition = message.state.selectedPosition;
+      positionBtns.forEach(btn => {
+        btn.classList.toggle('selected', btn.dataset.position === selectedPosition);
+      });
+
+      // 如果启用了自动启动，重新启动倒计时
+      if (autoStartEnabled) {
+        startRefreshCountdown();
+      }
+    } else if (message.action === 'getAutoStartSetting') {
+      // 处理来自content script的getAutoStartSetting消息
+      sendResponse({ autoStart: autoStartEnabled });
     }
   });
+
+  // 加载保存的设置
+  loadSettings();
 
   // 获取当前状态
   sendMessageToTab('getStatus', function(response) {
@@ -240,6 +378,9 @@ document.addEventListener('DOMContentLoaded', function() {
         maxDownloadsInput.value = response.maxDownloads;
         maxOperationsInput.disabled = true;
         maxDownloadsInput.disabled = true;
+
+        // 如果正在运行，启动倒计时显示
+        startRefreshCountdown();
       } else {
         updateStatus('已停止', `已选择: ${getPositionText(selectedPosition)}，可以点击"测试"或"开始"`);
         startBtn.disabled = false;

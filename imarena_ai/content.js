@@ -18,6 +18,9 @@ let initialState = {
 };
 
 // 配置参数
+// 🔥 重要配置：方便调试修改
+const REFRESH_INTERVAL_CONFIG = 1 * 60 * 1000; // 1分钟（测试用，生产环境改为30*60*1000）
+
 const CONFIG = {
   // 刷新按钮的选择器（已验证有效）
   refreshSelectors: [
@@ -465,10 +468,15 @@ function waitForRefreshComplete() {
 
       // 分级超时检查
       if (elapsedTime > CONFIG.longWaitTime) {
-        // 长期超时（200秒+）：网站可能有问题，停止循环
+        // 长期超时（200秒+）：网站可能有问题，触发页面刷新
         clearInterval(checkInterval);
-        console.log('❌ 长期超时（200秒+），网站可能存在问题，停止循环');
-        reject(new Error('等待图片生成完成长期超时：网站可能存在问题，停止循环'));
+        console.log('❌ 长期超时（200秒+），网站可能存在问题，触发页面刷新...');
+
+        // 直接执行页面刷新
+        setTimeout(() => {
+          location.reload();
+        }, 1000);
+
         return;
       } else if (elapsedTime > CONFIG.maxWaitTime) {
         // 短期超时（60秒+）：继续等待，不处理
@@ -530,82 +538,56 @@ async function executeRefreshCycle() {
       throw new Error('未找到刷新按钮');
     }
 
-    // 2. 记录刷新按钮信息（在点击之前）
+    // 2. 在点击刷新按钮之前，检查是否需要执行页面刷新
+    if (shouldPerformPageRefresh()) {
+      console.log('🔄 检测到需要页面刷新，先执行页面刷新...');
+      await performPageRefresh();
+      return 'stop_loop'; // 停止当前循环，等待页面刷新后自动恢复
+    }
+
+    // 3. 记录刷新按钮信息（在点击之前）
     const refreshButtonPosition = {
       left: refreshButton.getBoundingClientRect().left,
       top: refreshButton.getBoundingClientRect().top
     };
     console.log(`将要点击刷新按钮 #${initialState.clickedRefreshButtonIndex + 1}: (${refreshButtonPosition.left}, ${refreshButtonPosition.top})`);
 
-    // 3. 点击刷新按钮
+    // 4. 点击刷新按钮
     refreshButton.click();
     operationCount++;
 
-    // 4. 等待刷新完成
+    // 5. 等待刷新完成
     console.log('开始图片生成...');
     try {
-    await waitForRefreshComplete();
+      await waitForRefreshComplete();
     } catch (error) {
       if (error.message.includes('长期超时')) {
-        // 长期超时：网站可能有问题，停止循环
-        console.log('❌ 长期超时，网站可能存在问题，停止循环');
-        chrome.runtime.sendMessage({
-          action: 'error',
-          error: '网站可能存在问题，建议手动刷新页面后重试'
-        }).catch(() => {}); // popup可能已关闭，忽略消息发送错误
-        throw new Error('网站问题：建议手动刷新页面');
+        // 长期超时：网站可能有问题，触发页面刷新
+        console.log('❌ 长期超时，网站可能存在问题，触发页面刷新...');
+
+        // 执行页面刷新
+        await performPageRefresh();
+        return 'stop_loop'; // 停止当前循环，等待页面刷新后自动恢复
       }
       throw error; // 重新抛出其他错误
     }
 
-    // 5. 尝试查找对应的下载按钮（最多尝试3次）
+    // 6. 尝试查找对应的下载按钮（最多尝试3次）
     // console.log('开始查找对应的下载按钮...');
     const downloadButton = await tryFindDownloadButton();
 
-    // 6. 点击下载按钮
+    // 7. 点击下载按钮
     console.log('✅ 图片生成成功，点击下载按钮');
     downloadButton.click();
     successfulDownloads++; // 增加成功下载计数
 
-    console.log(`✅ 第 ${operationCount} 次循环完成（图片生成成功+下载完成）- 成功下载：${successfulDownloads}`);
+    console.log(`✅ 第 ${operationCount} 次循环完成，成功下载: ${successfulDownloads}/${CONFIG.maxDownloads}`);
 
-    // 发送消息给popup更新状态
-    const currentTime = Date.now();
-    const elapsedTime = startTime ? currentTime - startTime : 0;
-    const elapsedMinutes = Math.floor(elapsedTime / 60000);
-    const elapsedSeconds = Math.floor((elapsedTime % 60000) / 1000);
+    return true; // 成功完成一次循环
 
-    chrome.runtime.sendMessage({
-      action: 'operationUpdate',
-      count: operationCount,
-      downloads: successfulDownloads,
-      status: 'success',
-      elapsedTimeFormatted: `${elapsedMinutes}分${elapsedSeconds}秒`
-    }).catch(() => {}); // popup可能已关闭，忽略消息发送错误
-
-    return true;
-
-    } catch (error) {
-    console.log(`❌ 第 ${operationCount} 次图片生成失败:`, error.message);
-
-    // 区分不同类型的错误
-    if (error.message.includes('刷新失败：未找到下载按钮')) {
-      console.log('📝 这是生成失败，将继续重新生成...');
-      // 刷新失败，返回false，主循环会继续下一次刷新
-      return false;
-    } else if (error.message.includes('网站问题：建议手动刷新页面')) {
-      console.log('🌐 检测到网站问题，停止循环');
-      // 网站问题，停止循环
-      return 'stop_loop';
-    } else {
-      // 其他严重错误，发送错误消息
-      chrome.runtime.sendMessage({
-        action: 'error',
-        error: error.message
-      }).catch(() => {}); // popup可能已关闭，忽略消息发送错误
-
-      return false;
-    }
+  } catch (error) {
+    console.log(`❌ 第 ${operationCount} 次循环失败:`, error);
+    return false; // 失败
   }
 }
 
@@ -633,6 +615,12 @@ function startAutoRefresh(maxOperations = CONFIG.maxOperations, maxDownloads = C
   operationCount = 0;
   successfulDownloads = 0;
   startTime = Date.now(); // 记录开始时间
+
+  // 启用自动页面刷新功能
+  window.autoRefreshEnabled = true;
+
+  // 记录启动时间（用于计算页面刷新间隔）
+  localStorage.setItem('adskip_last_page_refresh', Date.now().toString());
 
   // 更新配置中的最大值
   CONFIG.maxOperations = maxOperations;
@@ -662,8 +650,8 @@ function startAutoRefresh(maxOperations = CONFIG.maxOperations, maxDownloads = C
         console.log('✅ 生成成功，等待2秒后继续下一次...');
         setTimeout(runCycle, 2000);
       } else if (result === 'stop_loop') {
-        console.log('🌐 检测到网站问题，停止循环');
-        stopAutoRefresh('website_problem');
+        console.log('🌐 检测到需要页面刷新，停止循环');
+        // 不调用stopAutoRefresh，因为页面会刷新
         return;
       } else {
         console.log('❌ 生成失败，等待2秒后重新尝试...');
@@ -681,48 +669,317 @@ function startAutoRefresh(maxOperations = CONFIG.maxOperations, maxDownloads = C
 // 停止自动刷新循环
 function stopAutoRefresh(reason = 'manual') {
   if (!loopRunning) {
-    console.log('自动刷新已停止');
+    console.log('自动刷新未在运行');
     return { success: false, error: '未在运行' };
   }
 
-  console.log('🛑 停止自动循环生成图片');
+  console.log(`🛑 停止自动刷新循环，原因: ${getStopReasonText(reason)}`);
+
+  // 停止循环
   loopRunning = false;
 
+  // 禁用自动页面刷新功能
+  window.autoRefreshEnabled = false;
+
+  // 清理定时器
   if (refreshInterval) {
     clearInterval(refreshInterval);
     refreshInterval = null;
   }
 
-  // 计算总耗时
+  // 计算运行时间和统计信息
   const endTime = Date.now();
   const totalTime = startTime ? endTime - startTime : 0;
   const totalMinutes = Math.floor(totalTime / 60000);
   const totalSeconds = Math.floor((totalTime % 60000) / 1000);
 
-  // 生成停止报告
+  // 生成报告
   const report = {
     reason: reason,
-    totalRefreshes: operationCount,
-    successfulDownloads: successfulDownloads,
-    totalTimeMs: totalTime,
+    totalTime: totalTime,
     totalTimeFormatted: `${totalMinutes}分${totalSeconds}秒`,
+    operationCount: operationCount,
+    successfulDownloads: successfulDownloads,
     successRate: operationCount > 0 ? Math.round((successfulDownloads / operationCount) * 100) : 0
   };
 
-  console.log('📊 自动循环图片生成结束报告:');
-  console.log(`停止原因: ${getStopReasonText(reason)}`);
-  console.log(`总生成次数: ${report.totalRefreshes}`);
-  console.log(`成功下载: ${report.successfulDownloads}`);
-  console.log(`总耗时: ${report.totalTimeFormatted}`);
-  console.log(`成功率: ${report.successRate}%`);
+  console.log('📊 运行报告:', report);
 
-  // 发送停止报告给popup
+  // 发送停止消息给popup
   chrome.runtime.sendMessage({
     action: 'loopStopped',
     report: report
-  }).catch(() => {}); // popup可能已关闭，忽略消息发送错误
+  }).catch(() => {}); // popup可能已关闭，忽略错误
+
+  // 重置状态
+  startTime = null;
+  operationCount = 0;
+  successfulDownloads = 0;
 
   return { success: true, report: report };
+}
+
+// 检查是否需要执行页面刷新
+function shouldPerformPageRefresh() {
+  // 检查是否启用了自动刷新
+  if (!window.autoRefreshEnabled) {
+    return false;
+  }
+
+  // 检查距离上次页面刷新的时间
+  const lastRefreshTime = localStorage.getItem('adskip_last_page_refresh');
+  if (!lastRefreshTime) {
+    return false;
+  }
+
+  const now = Date.now();
+  const timeSinceLastRefresh = now - parseInt(lastRefreshTime);
+  const refreshInterval = 60 * 1000; // 60秒（测试用，生产环境改为30*60*1000）
+
+  // 如果距离上次刷新超过指定时间，则需要刷新
+  return timeSinceLastRefresh >= refreshInterval;
+}
+
+// 执行页面刷新（避免Cloudflare会话过期）
+async function performPageRefresh() {
+  console.log('🔄 执行页面刷新，避免Cloudflare会话过期...');
+
+  try {
+    // 记录当前刷新时间
+    localStorage.setItem('adskip_last_page_refresh', Date.now().toString());
+
+    // 保存当前状态
+    const currentState = {
+      isRunning: loopRunning,
+      operationCount: operationCount,
+      successfulDownloads: successfulDownloads,
+      selectedPosition: selectedPosition,
+      maxOperations: CONFIG.maxOperations,
+      maxDownloads: CONFIG.maxDownloads,
+      startTime: startTime,
+      autoStart: true, // 页面刷新后自动恢复
+      // 保存初始状态信息（重要：用于恢复后继续执行）
+      refreshButtonCount: initialState.refreshButtonCount,
+      clickedRefreshButtonIndex: initialState.clickedRefreshButtonIndex
+    };
+
+    console.log('💾 保存当前状态:', currentState);
+
+    // 保存到localStorage（页面刷新后仍可访问）
+    localStorage.setItem('adskip_auto_refresh_state', JSON.stringify(currentState));
+
+    console.log('💾 已保存当前状态，准备刷新页面...');
+
+    // 延迟刷新，让用户看到状态
+    setTimeout(() => {
+      location.reload();
+    }, 1000);
+
+    return { success: true, message: '页面将在1秒后刷新' };
+
+  } catch (error) {
+    console.error('❌ 页面刷新失败:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+// 执行自动刷新（避免Cloudflare会话过期）
+function performAutoRefresh() {
+  console.log('🔄 执行自动刷新，避免Cloudflare会话过期...');
+
+  try {
+    // 从popup获取autoStart设置
+    chrome.runtime.sendMessage({action: 'getAutoStartSetting'}, function(response) {
+      if (chrome.runtime.lastError) {
+        console.log('无法获取autoStart设置，使用默认值false');
+      }
+
+      // 保存当前状态
+      const currentState = {
+        isRunning: loopRunning, // 修复：使用正确的变量名
+        operationCount: operationCount,
+        successfulDownloads: successfulDownloads,
+        selectedPosition: selectedPosition,
+        maxOperations: CONFIG.maxOperations,
+        maxDownloads: CONFIG.maxDownloads,
+        startTime: startTime,
+        autoStart: response ? response.autoStart : false
+      };
+
+      // 保存到localStorage（页面刷新后仍可访问）
+      localStorage.setItem('adskip_auto_refresh_state', JSON.stringify(currentState));
+
+      console.log('💾 已保存当前状态，准备刷新页面...');
+
+      // 延迟刷新，让用户看到状态
+      setTimeout(() => {
+        location.reload();
+      }, 1000);
+    });
+
+    return { success: true, message: '页面将在1秒后刷新' };
+
+  } catch (error) {
+    console.error('❌ 自动刷新失败:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+// 检查并恢复自动刷新状态
+function checkAndRestoreAutoRefreshState() {
+  try {
+    const savedState = localStorage.getItem('adskip_auto_refresh_state');
+    if (savedState) {
+      const state = JSON.parse(savedState);
+      console.log('🔄 检测到自动刷新状态，准备恢复...', state);
+
+      // 等待页面完全加载后恢复
+      setTimeout(() => {
+        restoreAutoRefreshState(state);
+      }, 3000);
+    }
+  } catch (error) {
+    console.error('❌ 检查自动刷新状态失败:', error);
+  }
+}
+
+// 恢复自动刷新状态
+function restoreAutoRefreshState(state) {
+  try {
+    console.log('🔄 恢复自动刷新状态...');
+
+    // 恢复配置
+    CONFIG.maxOperations = state.maxOperations;
+    CONFIG.maxDownloads = state.maxDownloads;
+    selectedPosition = selectedPosition;
+
+    // 恢复执行状态
+    operationCount = state.operationCount || 0;
+    successfulDownloads = state.successfulDownloads || 0;
+    startTime = state.startTime || Date.now();
+
+    // 恢复初始状态（重要：用于判断图片生成完成）
+    initialState.refreshButtonCount = state.refreshButtonCount || 0;
+    initialState.selectedRefreshButton = null; // 重新查找
+    initialState.clickedRefreshButtonIndex = state.clickedRefreshButtonIndex || 0;
+
+    console.log(`📊 恢复初始状态: 刷新按钮数量 = ${initialState.refreshButtonCount}`);
+
+    // 如果之前在运行或者启用了自动启动，自动开始执行
+    if (state.isRunning || state.autoStart) {
+      const reason = state.isRunning ? '之前正在运行' : '启用了自动启动';
+      console.log(`🔄 检测到${reason}，自动开始执行...`);
+      console.log(`📊 恢复状态: 已完成${operationCount}次，成功下载${successfulDownloads}次`);
+      console.log(`📊 剩余执行: 还需${CONFIG.maxOperations - operationCount}次生成，还需${CONFIG.maxDownloads - successfulDownloads}次下载`);
+
+      // 等待页面元素加载完成
+      setTimeout(() => {
+        // 检查是否还需要继续执行
+        if (operationCount >= CONFIG.maxOperations || successfulDownloads >= CONFIG.maxDownloads) {
+          console.log('✅ 已达到停止条件，无需继续执行');
+          // 通知popup更新状态
+          chrome.runtime.sendMessage({
+            action: 'autoRefreshRestored',
+            state: {
+              ...state,
+              operationCount: operationCount,
+              successfulDownloads: successfulDownloads
+            }
+          }).catch(() => {});
+          return;
+        }
+
+        // 继续执行，但不要重新调用startAutoRefresh，而是直接开始循环
+        console.log('🔄 继续执行剩余任务...');
+        loopRunning = true;
+
+        // 直接开始循环，跳过startAutoRefresh的初始化
+        const runCycle = async () => {
+          if (!loopRunning) return;
+
+          // 检查停止条件
+          if (operationCount >= CONFIG.maxOperations) {
+            console.log(`✅ 已达到最大图片生成次数 (${CONFIG.maxOperations})，停止循环`);
+            stopAutoRefresh('reached_max_operations');
+            return;
+          }
+
+          if (successfulDownloads >= CONFIG.maxDownloads) {
+            console.log(`✅ 已达到最大下载数量 (${CONFIG.maxDownloads})，停止循环`);
+            stopAutoRefresh('reached_max_downloads');
+            return;
+          }
+
+          const result = await executeRefreshCycle();
+
+          if (loopRunning) {
+            if (result === true) {
+              console.log('✅ 生成成功，等待2秒后继续下一次...');
+              setTimeout(runCycle, 2000);
+            } else if (result === 'stop_loop') {
+              console.log('🌐 检测到需要页面刷新，停止循环');
+              return;
+            } else {
+              console.log('❌ 生成失败，等待2秒后重新尝试...');
+              setTimeout(runCycle, 2000);
+            }
+          }
+        };
+
+        // 立即开始循环
+        runCycle();
+
+        // 通知popup更新状态
+        chrome.runtime.sendMessage({
+          action: 'autoRefreshRestored',
+          state: {
+            ...state,
+            operationCount: operationCount,
+            successfulDownloads: successfulDownloads
+          }
+        }).catch(() => {});
+
+      }, 2000);
+    }
+
+    // 清理保存的状态
+    localStorage.removeItem('adskip_auto_refresh_state');
+
+  } catch (error) {
+    console.error('❌ 恢复自动刷新状态失败:', error);
+  }
+}
+
+// 检查是否需要自动启动
+function checkAutoStart() {
+  // console.log('🔍 检查是否启用了自动启动...');
+
+  // 直接从chrome.storage.local获取设置
+  chrome.storage.local.get(['autoStart', 'maxOperations', 'maxDownloads', 'position'], function(settings) {
+    if (settings.autoStart) {
+      // console.log('✅ 检测到autoStart=true，准备自动循环生成图片...');
+
+      const maxOperations = settings.maxOperations || 100;
+      const maxDownloads = settings.maxDownloads || 50;
+      const position = settings.position || 'first';
+
+      console.log('📋 使用设置开始循环生成图片:', { maxOperations, maxDownloads, position });
+      selectedPosition = position;
+
+      // 等待页面加载完成后自动启动
+      setTimeout(() => {
+        // console.log('🚀 开始自动启动...');
+        const result = startAutoRefresh(maxOperations, maxDownloads);
+        if (result.success) {
+          console.log('✅ 自动循环生成图片成功');
+        } else {
+          console.error('❌ 自动循环生成图片失败:', result.error);
+        }
+      }, 3000);
+    } else {
+      console.log('💡 autoStart=false，不自动循环生成图片');
+    }
+  });
 }
 
 // 获取停止原因的中文描述
@@ -1123,6 +1380,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         }
         break;
 
+      case 'performAutoRefresh':
+        // 执行自动刷新（避免Cloudflare会话过期）
+        const refreshResult = performAutoRefresh();
+        sendResponse(refreshResult);
+        break;
+
       default:
         console.warn('未知的消息action:', request.action);
         sendResponse({ success: false, error: '未知的操作' });
@@ -1138,31 +1401,25 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
 // 页面加载完成后的初始化
 function initialize() {
-  // console.log('🎯 LMArena页面检测完成');
-
   // 检查是否在正确的页面
   if (!window.location.href.includes('lmarena.ai')) {
     console.warn('当前页面不是lmarena.ai，插件可能无法正常工作');
     return;
   }
 
-  // 尝试找到刷新按钮，进行初始检测
-  // const refreshButton = findRefreshButton();
-  // if (refreshButton) {
-  //   console.log('✅ 初始检测：找到刷新按钮');
-  // } else {
-  //   console.warn('⚠️ 初始检测：未找到刷新按钮，请检查页面是否正确加载');
-  // }
+  // 检查是否需要恢复自动刷新状态
+  checkAndRestoreAutoRefreshState();
+
+  // 延迟检查自动启动，确保页面完全加载
+  setTimeout(() => {
+    checkAutoStart();
+  }, 3000);
 
   // 注入插件分析组件
-  // console.log('🔧 开始注入插件分析组件...');
   if (injectPluginComponent()) {
     console.log('✅ 插件分析组件注入成功');
   } else {
-    // console.log('⚠️ 插件分析组件注入失败，可能图片还未加载，设置延迟重试...');
-    // 延迟重试，因为图片可能是动态生成的
     setTimeout(() => {
-      // console.log('🔄 延迟重试注入插件组件...');
       injectPluginComponent();
     }, 2000);
   }
