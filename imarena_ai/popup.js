@@ -56,7 +56,8 @@ document.addEventListener('DOMContentLoaded', function() {
   function getPositionText(position) {
     const positionMap = {
       'first': '左侧按钮',
-      'last': '右侧按钮'
+      'last': '右侧按钮',
+      'both': '两侧按钮'
     };
     return positionMap[position] || position;
   }
@@ -171,6 +172,7 @@ document.addEventListener('DOMContentLoaded', function() {
       case 'manual': return '手动停止';
       case 'reached_max_operations': return '达到最大图片生成次数';
       case 'reached_max_downloads': return '达到最大下载数量';
+      case 'both_sides_completed': return '两侧模式完成：所有按钮都有下载按钮';
       case 'website_problem': return '网站问题（200秒超时）';
       case 'error': return '发生错误';
       default: return '未知原因';

@@ -177,6 +177,13 @@ function findRefreshButton() {
       // console.log('选择最后一个刷新按钮');
       break;
 
+    case 'both':
+      // 两侧模式：返回第一个按钮，但会在执行时处理两侧
+      targetButton = allRefreshButtons[0];
+      targetIndex = 0;
+      // console.log('选择两侧模式，先返回第一个按钮');
+      break;
+
     default:
       targetButton = allRefreshButtons[0];
       targetIndex = 0;
@@ -211,6 +218,111 @@ function findRefreshButton() {
   // }
 
   return targetButton;
+}
+
+// 获取所有刷新按钮（用于两侧模式）
+function getAllRefreshButtonsForBothMode() {
+  // 复用findRefreshButton的逻辑，但返回所有按钮
+  let candidateButtons = [];
+
+  // 尝试所有选择器找到刷新按钮
+  for (let selector of CONFIG.refreshSelectors) {
+    // console.log(`🔍 尝试选择器: ${selector}`);
+    const buttons = document.querySelectorAll(selector);
+    // console.log(`  找到 ${buttons.length} 个按钮`);
+
+    buttons.forEach((btn, index) => {
+      if (btn && btn.offsetParent !== null) { // 确保按钮可见
+        // console.log(`  ✅ 按钮 ${index + 1}: 可见，添加到候选列表`);
+        candidateButtons.push(btn);
+      } else {
+        console.log(`  ❌ 按钮 ${index + 1}: 不可见，跳过`);
+      }
+    });
+  }
+
+  // 如果没找到，尝试通过文本内容查找
+  if (candidateButtons.length === 0) {
+    const allButtons = document.querySelectorAll('button');
+    for (let button of allButtons) {
+      const text = button.textContent.toLowerCase();
+      const ariaLabel = (button.getAttribute('aria-label') || '').toLowerCase();
+      const title = (button.getAttribute('title') || '').toLowerCase();
+
+      if (text.includes('refresh') || text.includes('刷新') ||
+          ariaLabel.includes('refresh') || title.includes('refresh')) {
+        if (button.offsetParent !== null) {
+          candidateButtons.push(button);
+        }
+      }
+    }
+  }
+
+  // 尝试查找包含刷新图标的按钮
+  if (candidateButtons.length === 0) {
+    const refreshIcons = document.querySelectorAll('svg[class*="refresh"], svg[data-icon*="refresh"], .refresh-icon');
+    for (let icon of refreshIcons) {
+      const button = icon.closest('button');
+      if (button && button.offsetParent !== null) {
+        candidateButtons.push(button);
+      }
+    }
+  }
+
+  // 去重（基于DOM元素）
+  candidateButtons = [...new Set(candidateButtons)];
+
+  // 过滤掉下载按钮和其他非刷新按钮
+  let allRefreshButtons = candidateButtons.filter(button => {
+    // 检查按钮内容，排除下载按钮
+    const buttonHtml = button.innerHTML.toLowerCase();
+    const ariaLabel = (button.getAttribute('aria-label') || '').toLowerCase();
+    const title = (button.getAttribute('title') || '').toLowerCase();
+
+    // 排除包含下载相关内容的按钮
+    if (buttonHtml.includes('download') ||
+        ariaLabel.includes('download') ||
+        title.includes('download')) {
+      return false;
+    }
+
+    // 检查SVG图标，排除下载图标
+    const svgElements = button.querySelectorAll('svg');
+    for (let svg of svgElements) {
+      const svgClass = svg.className.baseVal || svg.getAttribute('class') || '';
+      const svgDataIcon = svg.getAttribute('data-icon') || '';
+
+      if (svgClass.includes('download') || svgDataIcon.includes('download')) {
+        return false;
+      }
+
+      // 检查是否是刷新图标（更精确的匹配）
+      if (svgClass.includes('refresh-cw') || svgDataIcon.includes('refresh-cw') ||
+          svgClass.includes('refresh') || svgDataIcon.includes('refresh') ||
+          svgClass.includes('rotate-cw') || svgDataIcon.includes('rotate-cw')) {
+        return true;
+      }
+    }
+
+    // 如果没有明确的图标，检查是否通过其他方式匹配到刷新
+    const matchedBySelector = CONFIG.refreshSelectors.some(selector => {
+      try {
+        return button.matches(selector);
+      } catch {
+        return false;
+      }
+    });
+
+    if (matchedBySelector) {
+      console.log('通过选择器匹配的按钮，保留:', button);
+      return true;
+    }
+
+    console.log('未找到明确刷新特征，排除按钮:', button);
+    return false;
+  });
+
+  return allRefreshButtons;
 }
 
 // 查找对应的下载按钮（修复版本）
@@ -471,7 +583,7 @@ function waitForRefreshComplete() {
 
       if (currentCount === initialState.refreshButtonCount) {
         clearInterval(checkInterval);
-        console.log('按钮数量已恢复，图片生成步骤完成');
+        console.log(`[${new Date().toLocaleTimeString()}] 按钮数量已恢复，图片生成步骤完成`);
         resolve(true);
         return;
       }
@@ -536,8 +648,13 @@ function tryFindDownloadButton() {
 
 // 执行一次完整的刷新-下载流程
 async function executeRefreshCycle() {
+  // 检查是否为两侧模式
+  if (selectedPosition === 'both') {
+    return await executeBothSidesRefreshCycle();
+  }
+
   try {
-    console.log(`🔄 开始第 ${operationCount + 1} 次循环生成图片`);
+    console.log(`🔄 [${new Date().toLocaleTimeString()}] 开始第 ${operationCount + 1} 次循环生成图片`);
 
     // 1. 找到刷新按钮
     const refreshButton = findRefreshButton();
@@ -580,20 +697,121 @@ async function executeRefreshCycle() {
     downloadButton.click();
     successfulDownloads++; // 增加成功下载计数
 
-    console.log(`✅ 第 ${operationCount} 次图片生成成功，次数进度: ${successfulDownloads}/${CONFIG.maxDownloads}，等待2秒后继续...`);
+    console.log(`✅ [${new Date().toLocaleTimeString()}] 第 ${operationCount} 次图片生成成功，次数进度: ${successfulDownloads}/${CONFIG.maxDownloads}，等待2秒后继续...`);
 
     return true; // 成功完成一次循环
 
   } catch (error) {
     // 图片生成失败是正常情况，简化日志输出
     if (error.message.includes('未找到下载按钮')) {
-      console.log(`❌ 第 ${operationCount} 次图片生成失败: 未找到下载按钮，等待2秒后继续...`);
+      console.log(`❌ [${new Date().toLocaleTimeString()}] 第 ${operationCount} 次图片生成失败: 未找到下载按钮，等待2秒后继续...`);
     } else {
       console.log(`❌ 第 ${operationCount} 次图片生成失败: ${error.message}`);
     }
     return false; // 失败
   }
 }
+
+// 执行两侧模式的刷新流程
+async function executeBothSidesRefreshCycle() {
+  try {
+    // 检查是否需要页面刷新
+    if (shouldPerformPageRefresh()) {
+      console.log('🔄 检测到需要页面刷新，先执行页面刷新...');
+      return 'stop_loop';
+    }
+
+    // 获取当前所有刷新按钮
+    const allRefreshButtons = getAllRefreshButtonsForBothMode();
+    if (allRefreshButtons.length === 0) {
+      // 没有刷新按钮，等待一下再试
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      return false;
+    }
+
+    let clickedAny = false;
+    let allCompleted = true;
+
+    // 检测每个刷新按钮，独立处理
+    for (let i = 0; i < allRefreshButtons.length; i++) {
+      const refreshButton = allRefreshButtons[i];
+      const hasDownloadButton = await checkForDownloadButtonByIndex(i);
+
+      if (hasDownloadButton) {
+        // 这个按钮已完成，不再点击
+        continue;
+      } else {
+        // 这个按钮还没完成
+        allCompleted = false;
+        console.log(`🔄 按钮${i + 1}需要刷新，点击...`);
+        refreshButton.click();
+        clickedAny = true;
+      }
+    }
+
+    // 如果所有按钮都已完成（都有下载按钮），任务完成
+    if (allCompleted && allRefreshButtons.length >= 2) {
+      console.log(`🎉 两侧模式完成：所有${allRefreshButtons.length}个按钮都有下载按钮`);
+      successfulDownloads += allRefreshButtons.length;
+      operationCount++;
+      return true; // 任务完成
+    }
+
+    // 如果点击了任何按钮，增加操作计数
+    if (clickedAny) {
+      operationCount++;
+    }
+
+    // 简单等待一下再继续下次检测
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    return false; // 继续循环
+
+  } catch (error) {
+    console.log(`❌ 两侧模式检测失败: ${error.message}`);
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    return false;
+  }
+}
+
+// 检查指定索引的刷新按钮旁边是否有下载按钮
+async function checkForDownloadButtonByIndex(buttonIndex) {
+  try {
+    // 获取所有刷新按钮
+    const allRefreshButtons = getAllRefreshButtonsForBothMode();
+    if (buttonIndex >= allRefreshButtons.length) {
+      return false;
+    }
+
+    const currentRefreshButton = allRefreshButtons[buttonIndex];
+    const refreshButtonPosition = currentRefreshButton.getBoundingClientRect();
+
+    // 找到所有下载按钮
+    const allDownloadButtons = [];
+    const downloadIcons = document.querySelectorAll('svg[class*="download"]');
+    for (let icon of downloadIcons) {
+      const button = icon.closest('button');
+      if (button && button.offsetParent !== null) {
+        allDownloadButtons.push(button);
+      }
+    }
+
+    // 检查是否有对应位置的下载按钮
+    const hasDownloadButton = allDownloadButtons.some(downloadBtn => {
+      const downloadRect = downloadBtn.getBoundingClientRect();
+      const yMatch = Math.abs(downloadRect.top - refreshButtonPosition.top) <= 5;
+      const xDistance = downloadRect.left - refreshButtonPosition.left;
+      const xMatch = (xDistance >= -1 && xDistance <= 10) || (xDistance >= 10 && xDistance <= 100);
+      return yMatch && xMatch;
+    });
+
+    return hasDownloadButton;
+  } catch (error) {
+    console.log(`❌ 检查按钮${buttonIndex + 1}的下载按钮时出错: ${error.message}`);
+    return false;
+  }
+}
+
+
 
 // 启动自动刷新循环
 function startAutoRefresh(maxOperations = CONFIG.maxOperations, maxDownloads = CONFIG.maxDownloads) {
@@ -657,8 +875,14 @@ function startAutoRefresh(maxOperations = CONFIG.maxOperations, maxDownloads = C
 
     if (loopRunning) {
       if (result === true) {
-        // console.log('✅ 生成成功，等待2秒后继续下一次...');
-        setTimeout(runCycle, 2000);
+        // 任务完成，停止循环
+        if (selectedPosition === 'both') {
+          console.log('🎉 两侧模式任务完成，停止循环');
+          stopAutoRefresh('both_sides_completed');
+        } else {
+          // 单侧模式成功，继续下一轮
+          setTimeout(runCycle, 2000);
+        }
       } else if (result === 'stop_loop') {
         console.log('🌐 检测到需要页面刷新，停止循环');
         // 不调用stopAutoRefresh，因为页面会刷新
@@ -797,6 +1021,13 @@ function shouldPerformPageRefresh() {
 // 🔥 新增：检测会话是否过期的函数
 function shouldRefreshDueToSessionExpiry() {
   if (!lastOperationTime) {
+    return false;
+  }
+
+  // 🔥 修复：如果是两侧模式，禁用会话过期检测
+  // 因为两侧模式下正常情况下就会有频繁的短间隔操作
+  if (selectedPosition === 'both') {
+    // console.log(`🔄 会话过期检测: 两侧模式下跳过会话过期检测`);
     return false;
   }
 
@@ -1439,8 +1670,14 @@ function restoreAutoRefreshState(state) {
 
           if (loopRunning) {
             if (result === true) {
-              // console.log('✅ 生成成功，等待2秒后继续下一次...');
-              setTimeout(runCycle, 2000);
+              // 任务完成，停止循环
+              if (selectedPosition === 'both') {
+                console.log('🎉 两侧模式任务完成，停止循环');
+                stopAutoRefresh('both_sides_completed');
+              } else {
+                // 单侧模式成功，继续下一轮
+                setTimeout(runCycle, 2000);
+              }
             } else if (result === 'stop_loop') {
               console.log('🌐 检测到需要页面刷新，停止循环');
               return;
@@ -1526,6 +1763,7 @@ function getStopReasonText(reason) {
     case 'manual': return '手动停止';
     case 'reached_max_operations': return '达到最大循环次数';
     case 'reached_max_downloads': return '达到最大下载数量';
+    case 'both_sides_completed': return '两侧模式完成：所有按钮都有下载按钮';
     case 'website_problem': return '网站问题（200秒超时）';
     case 'error': return '发生错误';
     default: return '未知原因';
