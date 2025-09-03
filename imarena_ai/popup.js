@@ -1,5 +1,5 @@
 // 🔥 重要配置：刷新间隔设置（方便调试修改）
-const REFRESH_INTERVAL = 60 * 1000; // 60秒（测试用，生产环境改为30*60*1000）
+// 注意：这个值现在由content.js控制，实际刷新间隔为10分钟
 
 document.addEventListener('DOMContentLoaded', function() {
   const startBtn = document.getElementById('startBtn');
@@ -15,14 +15,16 @@ document.addEventListener('DOMContentLoaded', function() {
   const reportDiv = document.getElementById('report');
   const reportContentDiv = document.getElementById('reportContent');
 
+  // 🔥 新增：日志管理按钮
+  const viewLogsBtn = document.getElementById('viewLogsBtn');
+  const exportLogsBtn = document.getElementById('exportLogsBtn');
+  const clearLogsBtn = document.getElementById('clearLogsBtn');
+
   // 当前选择的按钮位置
   let selectedPosition = 'first';
 
   // 自动启动相关变量
   let autoStartEnabled = false;
-  let refreshInterval = REFRESH_INTERVAL; // 使用配置的刷新间隔
-  let countdownInterval = null;
-  let nextRefreshTime = null;
 
   // 更新状态显示
   function updateStatus(text, info = '') {
@@ -175,9 +177,92 @@ document.addEventListener('DOMContentLoaded', function() {
     }
   }
 
+  // 🔥 新增：查看日志
+  function viewLogs() {
+    sendMessageToTab('getLogs', function(response) {
+      if (response && response.success) {
+        const logs = response.logs;
+        if (logs.length === 0) {
+          alert('暂无日志记录');
+          return;
+        }
+
+                // 显示最近的日志
+        const recentLogs = logs.slice(-20); // 显示最近20条
+        const logText = recentLogs.map(log => {
+          const time = new Date(log.timestamp).toLocaleString();
+          const level = log.level.toUpperCase().padEnd(5);
+          const category = log.category.toUpperCase().padEnd(10);
+
+          // 如果有详细数据，添加到日志中
+          let logLine = `[${time}] ${level} [${category}] ${log.message}`;
+
+          // 添加关键数据信息
+          if (log.data) {
+            if (log.data.operationCount !== undefined) {
+              logLine += ` (${log.data.operationCount}/${log.data.maxOperations}生成, ${log.data.successfulDownloads}/${log.data.maxDownloads}下载)`;
+            }
+            if (log.data.verificationDuration) {
+              logLine += ` (验证耗时: ${log.data.verificationDuration})`;
+            }
+            if (log.data.reason) {
+              logLine += ` (原因: ${log.data.reason})`;
+            }
+          }
+
+          return logLine;
+        }).join('\n');
+
+        alert(`最近${recentLogs.length}条日志：\n\n${logText}`);
+      } else {
+        alert('获取日志失败: ' + (response ? response.error : '未知错误'));
+      }
+    });
+  }
+
+  // 🔥 新增：导出日志
+  function exportLogs() {
+    sendMessageToTab('exportLogs', function(response) {
+      if (response && response.success) {
+        alert(`日志导出成功！共导出${response.count}条记录`);
+      } else {
+        alert('日志导出失败: ' + (response ? response.error : '未知错误'));
+      }
+    });
+  }
+
+  // 🔥 新增：清理日志
+  function clearLogs() {
+    if (confirm('确定要清理所有日志吗？此操作不可恢复。')) {
+      sendMessageToTab('clearLogs', function(response) {
+        if (response && response.success) {
+          alert('日志清理成功！');
+        } else {
+          alert('日志清理失败: ' + (response ? response.error : '未知错误'));
+        }
+      });
+    }
+  }
+
   // 为所有位置按钮添加点击事件
   positionBtns.forEach(btn => {
     btn.addEventListener('click', () => handlePositionSelection(btn));
+  });
+
+  // 🔥 新增：日志管理按钮事件监听器
+  viewLogsBtn.addEventListener('click', function() {
+    console.log('用户点击查看日志按钮');
+    viewLogs();
+  });
+
+  exportLogsBtn.addEventListener('click', function() {
+    console.log('用户点击导出日志按钮');
+    exportLogs();
+  });
+
+  clearLogsBtn.addEventListener('click', function() {
+    console.log('用户点击清理日志按钮');
+    clearLogs();
   });
 
   // 自动启动复选框事件监听
