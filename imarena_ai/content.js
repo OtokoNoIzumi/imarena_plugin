@@ -15,6 +15,13 @@ let shortIntervalCount = 0; // 连续短间隔次数
 const SHORT_INTERVAL_THRESHOLD = 4000; // 短间隔阈值（4秒）
 const MAX_SHORT_INTERVALS = 3; // 最大连续短间隔次数
 
+// 🔥 新增：两侧模式按钮时间统计
+let buttonClickStats = new Map(); // 存储每个按钮的统计数据
+// 数据结构: { coordinateIndex: { clickTimes: [], validDurations: [], isFinished: false } }
+
+// 🔥 新增：坐标区间映射（用于按钮识别）
+let coordinateZones = new Map(); // 存储坐标区间到序号的映射
+
 // 🔥 新增：日志系统相关变量
 const LOG_MAX_ENTRIES = 100; // 最大日志条数
 const LOG_ENTRY_TTL = 2 * 24 * 60 * 60 * 1000; // 日志保留2天
@@ -323,6 +330,171 @@ function getAllRefreshButtonsForBothMode() {
   });
 
   return allRefreshButtons;
+}
+
+// 🔥 新增：记录按钮点击时间
+function recordButtonClick(buttonIndex) {
+  if (!buttonClickStats.has(buttonIndex)) {
+    buttonClickStats.set(buttonIndex, {
+      clickTimes: [],
+      validDurations: [],
+      isFinished: false
+    });
+  }
+
+  const stats = buttonClickStats.get(buttonIndex);
+  stats.clickTimes.push(Date.now());
+}
+
+// 🔥 新增：记录按钮刷新耗时（当检测到没有下载按钮时）
+function recordButtonRefreshDuration(buttonIndex) {
+  if (!buttonClickStats.has(buttonIndex)) {
+    console.log(`⚠️ 按钮${buttonIndex + 1}没有点击记录，无法计算耗时`);
+    return false;
+  }
+
+  const stats = buttonClickStats.get(buttonIndex);
+  const clickTimes = stats.clickTimes;
+
+  if (clickTimes.length === 0) {
+    console.log(`⚠️ 按钮${buttonIndex + 1}没有点击时间记录`);
+    return false;
+  }
+
+  // 计算最后一次点击到现在的耗时（刷新耗时）
+  const lastClickTime = clickTimes[clickTimes.length - 1];
+  const duration = (Date.now() - lastClickTime) / 1000; // 转换为秒
+
+
+  // 规则1: 单次时间超过60秒的排除在外不进入统计
+  if (duration <= 60) {
+    stats.validDurations.push(duration);
+  } else {
+    console.log(`按钮${buttonIndex + 1}重试耗时${duration.toFixed(1)}秒 > 60秒，排除统计`);
+  }
+
+  return false;
+}
+
+// 🔥 新增：检查并显示统计信息（在每次点击前调用）
+function checkAndDisplayStats(buttonIndex) {
+  if (!buttonClickStats.has(buttonIndex)) {
+    return false;
+  }
+
+  const stats = buttonClickStats.get(buttonIndex);
+
+  // 规则2: 累计5次有值之后才在日志中输出均值，每累计5次输出1次
+  if (stats.validDurations.length > 0 && stats.validDurations.length % 5 === 0) {
+    const avgDuration = stats.validDurations.reduce((sum, d) => sum + d, 0) / stats.validDurations.length;
+    console.log(`📊 按钮${buttonIndex + 1}统计: ${stats.validDurations.length}次有效记录，平均耗时: ${avgDuration.toFixed(1)}秒`);
+  }
+
+  // 规则3: 累计10次有值，且次均小于5秒的，该按钮视作结束，不再重试点击
+  if (stats.validDurations.length >= 10 && !stats.isFinished) {
+    const avgDuration = stats.validDurations.reduce((sum, d) => sum + d, 0) / stats.validDurations.length;
+    if (avgDuration < 8) {
+      stats.isFinished = true;
+      console.log(`🛑 按钮${buttonIndex + 1}达到结束条件: 10次记录平均${avgDuration.toFixed(1)}秒 < 8秒，不再重试`);
+      return true;
+    }
+  }
+
+  return false;
+}
+
+// 🔥 新增：检查按钮是否因统计规则而结束
+function isButtonFinishedByStats(buttonIndex) {
+  if (!buttonClickStats.has(buttonIndex)) {
+    return false;
+  }
+
+  return buttonClickStats.get(buttonIndex).isFinished;
+}
+
+// 🔥 新增：计算坐标区间并建立映射
+function calculateCoordinateZones(refreshButtons) {
+  coordinateZones.clear();
+
+  if (refreshButtons.length === 0) return;
+  if (refreshButtons.length === 1) {
+    // 只有一个按钮，整个坐标空间都是序号0
+    coordinateZones.set('0', { minX: -Infinity, maxX: Infinity, index: 0 });
+    return;
+  }
+
+  // 对按钮按横坐标排序
+  const sortedButtons = refreshButtons.slice().sort((a, b) => {
+    return a.getBoundingClientRect().left - b.getBoundingClientRect().left;
+  });
+
+  // 计算分界线：每两个相邻按钮之间的平均值
+  const boundaries = [];
+  for (let i = 0; i < sortedButtons.length - 1; i++) {
+    const currentX = sortedButtons[i].getBoundingClientRect().left;
+    const nextX = sortedButtons[i + 1].getBoundingClientRect().left;
+    boundaries.push((currentX + nextX) / 2);
+  }
+
+  // 为每个按钮分配坐标区间
+  for (let i = 0; i < sortedButtons.length; i++) {
+    let minX, maxX;
+
+    if (i === 0) {
+      // 第一个按钮：从负无穷到第一个分界线
+      minX = -Infinity;
+      maxX = boundaries[0];
+    } else if (i === sortedButtons.length - 1) {
+      // 最后一个按钮：从最后一个分界线到正无穷
+      minX = boundaries[boundaries.length - 1];
+      maxX = Infinity;
+    } else {
+      // 中间按钮：从上一个分界线到下一个分界线
+      minX = boundaries[i - 1];
+      maxX = boundaries[i];
+    }
+
+    coordinateZones.set(i.toString(), {
+      minX: minX,
+      maxX: maxX,
+      index: i
+    });
+  }
+}
+
+// 🔥 新增：根据坐标获取按钮序号
+function getButtonCoordinateIndex(buttonElement) {
+  if (coordinateZones.size === 0) return -1;
+
+  const buttonX = buttonElement.getBoundingClientRect().left;
+
+  for (const [key, zone] of coordinateZones) {
+    const minX = zone.minX === -Infinity ? -999999 : zone.minX;
+    const maxX = zone.maxX === Infinity ? 999999 : zone.maxX;
+
+    if (buttonX >= minX && buttonX < maxX) {
+      return zone.index;
+    }
+  }
+
+  // 如果没找到匹配的区间，默认返回0
+  return 0;
+}
+
+// 🔥 新增：初始化坐标区间（只在开始时调用一次）
+function initializeCoordinateZones(refreshButtons) {
+  if (coordinateZones.size === 0) {
+    // 只在第一次初始化时计算坐标区间
+    calculateCoordinateZones(refreshButtons);
+  }
+  // 后续不再重新计算，避免按钮序号不稳定
+}
+
+// 🔥 新增：重置按钮统计（在开始新任务时调用）
+function resetButtonStats() {
+  buttonClickStats.clear();
+  coordinateZones.clear();
+  console.log(`🔄 重置按钮统计数据和坐标区间`);
 }
 
 // 查找对应的下载按钮（修复版本）
@@ -729,29 +901,63 @@ async function executeBothSidesRefreshCycle() {
       return false;
     }
 
+    // 初始化坐标区间（只在开始时计算一次）
+    initializeCoordinateZones(allRefreshButtons);
+
     let clickedAny = false;
     let allCompleted = true;
 
     // 检测每个刷新按钮，独立处理
     for (let i = 0; i < allRefreshButtons.length; i++) {
       const refreshButton = allRefreshButtons[i];
-      const hasDownloadButton = await checkForDownloadButtonByIndex(i);
+      const coordinateIndex = getButtonCoordinateIndex(refreshButton);
+      const hasDownloadButton = await checkForDownloadButtonByCoordinateIndex(coordinateIndex);
 
       if (hasDownloadButton) {
-        // 这个按钮已完成，不再点击
+        // 有下载按钮表示已完成，不需要任何记录和操作
+        continue;
+      } else if (isButtonFinishedByStats(coordinateIndex)) {
+        // 检查是否因统计规则而结束
         continue;
       } else {
-        // 这个按钮还没完成
+        // 没有下载按钮，需要记录上次的刷新耗时并重新点击
         allCompleted = false;
-        console.log(`🔄 按钮${i + 1}需要刷新，点击...`);
+
+        // 如果有点击记录，说明上次的刷新已经完成，记录耗时
+        if (buttonClickStats.has(coordinateIndex) && buttonClickStats.get(coordinateIndex).clickTimes.length > 0) {
+          recordButtonRefreshDuration(coordinateIndex);
+
+          // 在记录耗时后检查并显示统计信息
+          checkAndDisplayStats(coordinateIndex);
+        }
+
+        console.log(`🔄 按钮${coordinateIndex + 1}需要刷新，点击...`);
         refreshButton.click();
+        recordButtonClick(coordinateIndex); // 记录新的点击时间
+
+
         clickedAny = true;
       }
     }
 
-    // 如果所有按钮都已完成（都有下载按钮），任务完成
-    if (allCompleted && allRefreshButtons.length >= 2) {
-      console.log(`🎉 两侧模式完成：所有${allRefreshButtons.length}个按钮都有下载按钮`);
+    // 检查是否有任何按钮仍在活跃状态（没有下载按钮且没有被统计规则结束）
+    let hasActiveButtons = false;
+    for (let i = 0; i < allRefreshButtons.length; i++) {
+      const refreshButton = allRefreshButtons[i];
+      const coordinateIndex = getButtonCoordinateIndex(refreshButton);
+      const hasDownloadButton = await checkForDownloadButtonByCoordinateIndex(coordinateIndex);
+      const isFinishedByStats = isButtonFinishedByStats(coordinateIndex);
+
+      // 如果按钮既没有下载按钮，也没有被统计规则结束，那么它还在活跃状态
+      if (!hasDownloadButton && !isFinishedByStats) {
+        hasActiveButtons = true;
+        break;
+      }
+    }
+
+    // 只有当没有任何按钮在活跃状态时，才结束任务
+    if (!hasActiveButtons && allRefreshButtons.length >= 2) {
+      console.log(`🎉 两侧模式完成：所有${allRefreshButtons.length}个按钮都有下载按钮或已被统计规则结束`);
       successfulDownloads += allRefreshButtons.length;
       operationCount++;
       return true; // 任务完成
@@ -811,6 +1017,55 @@ async function checkForDownloadButtonByIndex(buttonIndex) {
   }
 }
 
+// 检查指定坐标序号的刷新按钮旁边是否有下载按钮
+async function checkForDownloadButtonByCoordinateIndex(coordinateIndex) {
+  try {
+    // 获取所有刷新按钮
+    const allRefreshButtons = getAllRefreshButtonsForBothMode();
+
+    // 找到对应坐标序号的刷新按钮
+    let targetRefreshButton = null;
+    for (let i = 0; i < allRefreshButtons.length; i++) {
+      const button = allRefreshButtons[i];
+      const buttonCoordinateIndex = getButtonCoordinateIndex(button);
+      if (buttonCoordinateIndex === coordinateIndex) {
+        targetRefreshButton = button;
+        break;
+      }
+    }
+
+    if (!targetRefreshButton) {
+      return false;
+    }
+
+    const refreshButtonPosition = targetRefreshButton.getBoundingClientRect();
+
+    // 找到所有下载按钮
+    const allDownloadButtons = [];
+    const downloadIcons = document.querySelectorAll('svg[class*="download"]');
+    for (let icon of downloadIcons) {
+      const button = icon.closest('button');
+      if (button && button.offsetParent !== null) {
+        allDownloadButtons.push(button);
+      }
+    }
+
+    // 检查是否有对应位置的下载按钮
+    const hasDownloadButton = allDownloadButtons.some(downloadBtn => {
+      const downloadRect = downloadBtn.getBoundingClientRect();
+      const yMatch = Math.abs(downloadRect.top - refreshButtonPosition.top) <= 5;
+      const xDistance = downloadRect.left - refreshButtonPosition.left;
+      const xMatch = (xDistance >= -1 && xDistance <= 10) || (xDistance >= 10 && xDistance <= 100);
+      return yMatch && xMatch;
+    });
+
+    return hasDownloadButton;
+  } catch (error) {
+    console.log(`❌ 检查坐标按钮${coordinateIndex + 1}的下载按钮时出错: ${error.message}`);
+    return false;
+  }
+}
+
 
 
 // 启动自动刷新循环
@@ -822,6 +1077,11 @@ function startAutoRefresh(maxOperations = CONFIG.maxOperations, maxDownloads = C
 
   console.log(`🚀 启动自动刷新循环，目标位置: ${selectedPosition}`);
   console.log(`停止条件: 最大刷新次数=${maxOperations}, 最大下载数量=${maxDownloads}`);
+
+  // 🔥 新增：如果是两侧模式，重置按钮统计
+  if (selectedPosition === 'both') {
+    resetButtonStats();
+  }
 
   // 记录初始状态
   const initialRefreshButton = findRefreshButton();
@@ -1934,7 +2194,7 @@ function setupRefreshButtonListener() {
           }
         }
       } else {
-        console.log('🚫 跳过下载按钮点击');
+        // console.log('🚫 跳过下载按钮点击');
       }
     }
   });
